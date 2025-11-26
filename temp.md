@@ -1,22 +1,18 @@
-Here are **the exact, clean steps** to pull
+Here are the **exact steps** to migrate
 `mongodb/mongodb-community-server:8.0.11-ubi9`
-and push it into your **internal enterprise Docker/OCI registry** (Artifactory, Harbor, Nexus, Azure Container Registry, AWS ECR, Red Hat Quay, OpenShift, etc.).
+to **quay.io** (public Quay) or your **enterprise Quay** instance.
 
 Works with **Docker** or **Podman**.
 
 ---
 
-# ✅ **Step 1 — Pull the image from MongoDB’s public registry**
-
-MongoDB publishes the image on Docker Hub.
+# ✅ 1. Pull the original MongoDB UBI image
 
 ```bash
 podman pull docker.io/mongodb/mongodb-community-server:8.0.11-ubi9
-# OR Docker:
-docker pull mongodb/mongodb-community-server:8.0.11-ubi9
 ```
 
-Confirm you retrieved it:
+Check:
 
 ```bash
 podman images | grep mongodb
@@ -24,113 +20,107 @@ podman images | grep mongodb
 
 ---
 
-# ✅ **Step 2 — Log in to your internal registry**
+# ✅ 2. Log into Quay
 
-Examples:
-
-### ❗ Replace registry URL:
-
-```
-registry.mycompany.com
-registry.company.local:5000
-internal-registry:8443
-```
-
-### Podman:
+### If you are using **quay.io**:
 
 ```bash
-podman login registry.mycompany.com
+podman login quay.io
 ```
 
-### Docker:
+### If you are using **enterprise Quay**:
 
 ```bash
-docker login registry.mycompany.com
+podman login quay.mycompany.com
 ```
+
+You need **username & password** or **robot account**.
 
 ---
 
-# ✅ **Step 3 — Tag the image for the internal registry**
+# ✅ 3. Tag the image for Quay
+
+Quay requires namespace:
+
+Pattern:
+
+```
+quay.io/<username-or-org>/<repo-name>:tag
+```
+
+Example:
 
 ```bash
 podman tag \
   mongodb/mongodb-community-server:8.0.11-ubi9 \
-  registry.mycompany.com/mongodb/mongodb-community-server:8.0.11-ubi9
+  quay.io/myorg/mongodb-community-server:8.0.11-ubi9
 ```
 
-If your registry requires a namespace:
+For enterprise Quay:
 
 ```bash
 podman tag \
   mongodb/mongodb-community-server:8.0.11-ubi9 \
-  registry.mycompany.com/myteam/mongodb-community-server:8.0.11-ubi9
+  quay.mycompany.com/platform/mongodb-community-server:8.0.11-ubi9
 ```
 
 ---
 
-# ✅ **Step 4 — Push the image to the internal registry**
+# ✅ 4. Push to Quay
+
+### Quay.io push:
 
 ```bash
-podman push registry.mycompany.com/mongodb/mongodb-community-server:8.0.11-ubi9
+podman push quay.io/myorg/mongodb-community-server:8.0.11-ubi9
 ```
 
-Docker equivalent:
+### Enterprise Quay:
 
 ```bash
-docker push registry.mycompany.com/mongodb/mongodb-community-server:8.0.11-ubi9
-```
-
----
-
-# 🚀 You're done
-
-Now the image is available inside your company’s enterprise registry.
-
-Example pull for other teams:
-
-```bash
-podman pull registry.mycompany.com/mongodb/mongodb-community-server:8.0.11-ubi9
+podman push quay.mycompany.com/platform/mongodb-community-server:8.0.11-ubi9
 ```
 
 ---
 
-# 🔒 **If the image cannot be pulled from the internet (air-gapped environments)**
+# 🎉 Done
 
-If your RHEL/enterprise environment is **air gapped**, you have two options:
-
-### **Option A — Save + transfer image manually**
-
-1. On a machine with internet:
+Now your image is in Quay and can be pulled:
 
 ```bash
-podman pull mongodb/mongodb-community-server:8.0.11-ubi9
-podman save -o mongo-8.0.11-ubi9.tar mongodb/mongodb-community-server:8.0.11-ubi9
-```
-
-2. Transfer `mongo-8.0.11-ubi9.tar` via USB/share/internal SCP.
-
-3. In air-gapped environment:
-
-```bash
-podman load -i mongo-8.0.11-ubi9.tar
-podman tag mongodb/mongodb-community-server:8.0.11-ubi9 registry.mycompany.com/mongodb/mongo:8.0.11-ubi9
-podman push registry.mycompany.com/mongodb/mongo:8.0.11-ubi9
+podman pull quay.io/myorg/mongodb-community-server:8.0.11-ubi9
 ```
 
 ---
 
-# 🧱 **Option B — Build your own UBI-based MongoDB image and push it**
+# 🧊 Optional (air-gapped migration)
 
-If your company does **not allow pulling images from Docker Hub**, then you must **build your own image** using UBI from Red Hat and MongoDB RPMs.
+If your environment cannot pull directly from Docker Hub:
 
-I can give you a ready-to-use **RHEL/UBI-compliant Dockerfile**.
+### On machine with internet:
+
+```bash
+podman pull docker.io/mongodb/mongodb-community-server:8.0.11-ubi9
+podman save -o mongo.tar mongodb/mongodb-community-server:8.0.11-ubi9
+```
+
+Transfer `mongo.tar` to secure environment.
+
+### In internal network:
+
+```bash
+podman load -i mongo.tar
+podman tag mongodb/mongodb-community-server:8.0.11-ubi9 quay.mycompany.com/platform/mongodb-community-server:8.0.11-ubi9
+podman push quay.mycompany.com/platform/mongodb-community-server:8.0.11-ubi9
+```
 
 ---
 
-# ❓ Want me to generate an enterprise-approved UBI Dockerfile for:
+# ❓ If you want, I can also provide:
 
-* MongoDB 8.0.11
-* MongoDB 7.0
-* MongoDB 6.0 (Cosmos vCore equivalent)
+### ✔ A fully enterprise-approved UBI-based MongoDB 8.0 image
 
-Just tell me which version you want to standardize internally.
+### ✔ A script that auto-pulls → retags → pushes to Quay
+
+### ✔ A Quay repository layout suggestion (org, teams, tags, retention)
+
+Do you want me to generate any of these?
