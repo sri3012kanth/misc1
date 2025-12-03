@@ -1,126 +1,143 @@
-Here are the **exact steps** to migrate
-`mongodb/mongodb-community-server:8.0.11-ubi9`
-to **quay.io** (public Quay) or your **enterprise Quay** instance.
+Got it — **min = 0 and max = 1** is a special case for Cloud Run.
 
-Works with **Docker** or **Podman**.
+This setup means:
 
----
+* You allow **cold starts** (min=0).
+* You **do NOT allow parallel instances** (max=1).
+* Every cold start must pass the **readiness probe** before Cloud Run accepts requests.
 
-# ✅ 1. Pull the original MongoDB UBI image
+This means **startup optimization becomes critical** because Cloud Run cannot scale around delays.
 
-```bash
-podman pull docker.io/mongodb/mongodb-community-server:8.0.11-ubi9
-```
-
-Check:
-
-```bash
-podman images | grep mongodb
-```
+Below is the *correct* Cloud Run configuration for this constraint.
 
 ---
 
-# ✅ 2. Log into Quay
+# ✅ **1. Best Cloud Run Settings for min=0 and max=1**
 
-### If you are using **quay.io**:
+Since you only allow a **single instance**, the startup must be:
+
+* fast
+* not blocked by heavy Actuator checks
+* fully lazy
+
+Here is the ideal configuration:
+
+### **Cloud Run Readiness Probe**
+
+Use the **lightest health endpoint**:
+
+```
+/actuator/health/readiness
+```
+
+This endpoint avoids DB, JMS, Redis checks.
+
+### **gcloud config**
 
 ```bash
-podman login quay.io
-```
-
-### If you are using **enterprise Quay**:
-
-```bash
-podman login quay.mycompany.com
-```
-
-You need **username & password** or **robot account**.
-
----
-
-# ✅ 3. Tag the image for Quay
-
-Quay requires namespace:
-
-Pattern:
-
-```
-quay.io/<username-or-org>/<repo-name>:tag
-```
-
-Example:
-
-```bash
-podman tag \
-  mongodb/mongodb-community-server:8.0.11-ubi9 \
-  quay.io/myorg/mongodb-community-server:8.0.11-ubi9
-```
-
-For enterprise Quay:
-
-```bash
-podman tag \
-  mongodb/mongodb-community-server:8.0.11-ubi9 \
-  quay.mycompany.com/platform/mongodb-community-server:8.0.11-ubi9
+--readiness-probe-path="/actuator/health/readiness" \
+--readiness-probe-initial-delay=0 \
+--readiness-probe-timeout=5 \
+--readiness-probe-period=5 \
+--readiness-probe-failure-threshold=3 \
+--min-instances=0 \
+--max-instances=1 \
+--timeout=300 \
+--cpu-boost
 ```
 
 ---
 
-# ✅ 4. Push to Quay
+# 💡 Why `max-instances=1` Makes Readiness Even More Important
 
-### Quay.io push:
+With max=1:
 
-```bash
-podman push quay.io/myorg/mongodb-community-server:8.0.11-ubi9
-```
+### ✔ Cloud Run cannot spin up a second instance to handle traffic
 
-### Enterprise Quay:
+So **all incoming requests wait** until the readiness probe succeeds.
 
-```bash
-podman push quay.mycompany.com/platform/mongodb-community-server:8.0.11-ubi9
-```
+### ✔ Any slow DB init = whole service unresponsive
 
----
+Because readiness is blocking request routing.
 
-# 🎉 Done
+### ✔ Actuator `/health` MUST NOT hit heavy checks
 
-Now your image is in Quay and can be pulled:
+Else:
 
-```bash
-podman pull quay.io/myorg/mongodb-community-server:8.0.11-ubi9
-```
+* container boot delay
+* Cloud Run probe fails → restarts the instance → long outage
+
+This is why **you MUST NOT expose deep health checks** to Cloud Run.
 
 ---
 
-# 🧊 Optional (air-gapped migration)
+# ✅ **2. Spring Boot Config Needed on Your Side**
 
-If your environment cannot pull directly from Docker Hub:
+Add this:
 
-### On machine with internet:
+```yaml
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
 
-```bash
-podman pull docker.io/mongodb/mongodb-community-server:8.0.11-ubi9
-podman save -o mongo.tar mongodb/mongodb-community-server:8.0.11-ubi9
+management.health.defaults.enabled=false
+
+management.health.ping.enabled=true
+management.health.livenessState.enabled=true
+management.health.readinessState.enabled=true
 ```
 
-Transfer `mongo.tar` to secure environment.
+This ensures:
 
-### In internal network:
-
-```bash
-podman load -i mongo.tar
-podman tag mongodb/mongodb-community-server:8.0.11-ubi9 quay.mycompany.com/platform/mongodb-community-server:8.0.11-ubi9
-podman push quay.mycompany.com/platform/mongodb-community-server:8.0.11-ubi9
-```
+* readiness = cheap
+* liveness = cheap
+* default health indicators (DB, Kafka, Redis) are disabled at startup
+* lazy initialization actually works
 
 ---
 
-# ❓ If you want, I can also provide:
+# ❗ **3. Avoid `/actuator/health` for Cloud Run**
 
-### ✔ A fully enterprise-approved UBI-based MongoDB 8.0 image
+Do **NOT** use:
 
-### ✔ A script that auto-pulls → retags → pushes to Quay
+```
+/actuator/health
+```
 
-### ✔ A Quay repository layout suggestion (org, teams, tags, retention)
+Because:
 
-Do you want me to generate any of these?
+* Spring loads all `HealthIndicator` beans
+* They run BEFORE lazy initialization
+* They block your app start
+* Cloud Run thinks instance is unhealthy → restart loop
+
+This is exactly the behavior you reported:
+
+> as soon as instance starts actuator health is being called and then it’s delaying start
+
+---
+
+# ⭐ Recommended Cloud Run + Spring Boot (min=0 max=1) Summary
+
+| Area            | Recommended                       |
+| --------------- | --------------------------------- |
+| Min Instances   | 0                                 |
+| Max Instances   | 1                                 |
+| Readiness Probe | `/actuator/health/readiness`      |
+| Liveness Probe  | `/actuator/health/liveness`       |
+| Timeout         | 300 seconds                       |
+| CPU Boost       | Enabled                           |
+| Spring Boot     | Disable default health indicators |
+
+---
+
+# 👉 If you want, I can generate:
+
+* Full `gcloud run deploy` command pre-filled
+* Terraform configuration
+* A production-ready `application.yaml` template
+* Or analyze your current Spring Boot logs to see where startup delay is occurring
+
+Just tell me which one you want.
